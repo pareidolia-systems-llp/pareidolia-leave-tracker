@@ -5,6 +5,7 @@ import com.acme.hr.leavetracker.api.LeaveRequestView;
 import com.acme.hr.leavetracker.config.AppProperties;
 import com.acme.hr.leavetracker.domain.AuditEventType;
 import com.acme.hr.leavetracker.domain.Employee;
+import com.acme.hr.leavetracker.domain.EmploymentType;
 import com.acme.hr.leavetracker.domain.LeaveBalance;
 import com.acme.hr.leavetracker.domain.LeaveRequest;
 import com.acme.hr.leavetracker.domain.LeaveStatus;
@@ -143,7 +144,8 @@ class LocalApprovalWorkflowIntegrationTest {
     private PendingFixture pendingFixture(String token) {
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         Employee employee = employeeRepository.save(new Employee(
-                "nova." + suffix + "@example.test", "Nova Park", "orion." + suffix + "@example.test"));
+                "nova." + suffix + "@example.test", "Nova Park", "orion." + suffix + "@example.test",
+                LocalDate.of(2026, 1, 5), EmploymentType.PERMANENT, null));
         LeaveBalance balance = balanceRepository.save(new LeaveBalance(employee, LeaveType.PL, new BigDecimal("10.0")));
         LeaveRequest request = requestRepository.save(new LeaveRequest(employee, LeaveType.PL,
                 LocalDate.now().plusDays(3), LocalDate.now().plusDays(4), new BigDecimal("2.0"), "Fictional local workflow",

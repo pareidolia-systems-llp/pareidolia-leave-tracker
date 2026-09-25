@@ -1,6 +1,7 @@
 package com.acme.hr.leavetracker;
 
 import com.acme.hr.leavetracker.domain.Employee;
+import com.acme.hr.leavetracker.domain.EmploymentType;
 import com.acme.hr.leavetracker.domain.LeaveBalance;
 import com.acme.hr.leavetracker.domain.LeaveRequest;
 import com.acme.hr.leavetracker.domain.LeaveType;
@@ -49,7 +50,8 @@ class ApprovalFlowIntegrationTest {
 
     @Test
     void signedApprovalDeductsDecimalBalanceExactlyOnce() throws Exception {
-        Employee employee = employeeRepository.save(new Employee("employee@example.com", "Employee One", "manager@example.com"));
+        Employee employee = employeeRepository.save(new Employee("employee@example.com", "Employee One", "manager@example.com",
+                LocalDate.of(2026, 1, 5), EmploymentType.PERMANENT, null));
         LeaveBalance balance = balanceRepository.save(new LeaveBalance(employee, LeaveType.PL, new BigDecimal("3.0")));
         String approvalToken = "known-test-token";
         LeaveRequest request = requestRepository.save(new LeaveRequest(employee, LeaveType.PL,
@@ -83,7 +85,7 @@ class ApprovalFlowIntegrationTest {
     }
 
     @Test
-    void employeeUpsertStoresAndReturnsDecimalBalances() throws Exception {
+    void regularEmployeeUpsertStoresPolicyMetadataAndReturnsDecimalBalances() throws Exception {
         mockMvc.perform(post("/api/admin/employees")
                         .header("X-HR-Admin-Key", "test-admin-key")
                         .contentType("application/json")
@@ -92,15 +94,23 @@ class ApprovalFlowIntegrationTest {
                                   "email":"nova.park@example.test",
                                   "fullName":"Nova Park",
                                   "managerEmail":"orion.lee@example.test",
+                                  "joiningDate":"2026-02-02",
+                                  "employmentType":"PERMANENT",
                                   "plLeaveDays":1.5,
                                   "clLeaveDays":0.5,
                                   "slLeaveDays":7.0
                                 }
                                 """))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.email").value("nova.park@example.test"));
+                .andExpect(jsonPath("$.email").value("nova.park@example.test"))
+                .andExpect(jsonPath("$.joiningDate").value("2026-02-02"))
+                .andExpect(jsonPath("$.employmentType").value("PERMANENT"))
+                .andExpect(jsonPath("$.probationEndDate").doesNotExist());
 
         Employee employee = employeeRepository.findByEmailIgnoreCase("nova.park@example.test").orElseThrow();
+        assertThat(employee.getJoiningDate()).isEqualTo(LocalDate.of(2026, 2, 2));
+        assertThat(employee.getEmploymentType()).isEqualTo(EmploymentType.PERMANENT);
+        assertThat(employee.getProbationEndDate()).isNull();
         var balances = balanceRepository.findByEmployeeId(employee.getId());
         assertThat(balances.stream().map(LeaveBalance::getLeaveType))
                 .containsExactlyInAnyOrder(LeaveType.PL, LeaveType.CL, LeaveType.SL);
@@ -116,5 +126,61 @@ class ApprovalFlowIntegrationTest {
                 .andExpect(jsonPath("$[0].entitlementDays").value(0.5))
                 .andExpect(jsonPath("$[1].leaveType").value("PL"))
                 .andExpect(jsonPath("$[1].entitlementDays").value(1.5));
+    }
+
+    @Test
+    void internEmployeeUpsertStoresPolicyMetadata() throws Exception {
+        mockMvc.perform(post("/api/admin/employees")
+                        .header("X-HR-Admin-Key", "test-admin-key")
+                        .contentType("application/json")
+                        .content("""
+                                {
+                                  "email":"lumen.ray@example.test",
+                                  "fullName":"Lumen Ray",
+                                  "managerEmail":"orion.lee@example.test",
+                                  "joiningDate":"2026-03-09",
+                                  "employmentType":"INTERN",
+                                  "probationEndDate":"2026-06-09",
+                                  "plLeaveDays":0.0,
+                                  "clLeaveDays":0.0,
+                                  "slLeaveDays":0.0
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.employmentType").value("INTERN"))
+                .andExpect(jsonPath("$.probationEndDate").value("2026-06-09"));
+
+        Employee employee = employeeRepository.findByEmailIgnoreCase("lumen.ray@example.test").orElseThrow();
+        assertThat(employee.getJoiningDate()).isEqualTo(LocalDate.of(2026, 3, 9));
+        assertThat(employee.getEmploymentType()).isEqualTo(EmploymentType.INTERN);
+        assertThat(employee.getProbationEndDate()).isEqualTo(LocalDate.of(2026, 6, 9));
+    }
+
+    @Test
+    void employeeUpsertRejectsMissingJoiningDate() throws Exception {
+        mockMvc.perform(post("/api/admin/employees")
+                        .header("X-HR-Admin-Key", "test-admin-key")
+                        .contentType("application/json")
+                        .content("""
+                                {"email":"aster.quill@example.test","fullName":"Aster Quill",
+                                "managerEmail":"orion.lee@example.test","employmentType":"PERMANENT",
+                                "plLeaveDays":1.0,"clLeaveDays":1.0,"slLeaveDays":1.0}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("joiningDate")));
+    }
+
+    @Test
+    void employeeUpsertRejectsMissingEmploymentType() throws Exception {
+        mockMvc.perform(post("/api/admin/employees")
+                        .header("X-HR-Admin-Key", "test-admin-key")
+                        .contentType("application/json")
+                        .content("""
+                                {"email":"sol.ember@example.test","fullName":"Sol Ember",
+                                "managerEmail":"orion.lee@example.test","joiningDate":"2026-04-01",
+                                "plLeaveDays":1.0,"clLeaveDays":1.0,"slLeaveDays":1.0}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("employmentType")));
     }
 }

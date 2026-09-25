@@ -34,10 +34,13 @@ public class HrAdminService {
         String email = normalizeEmail(input.email());
         Employee employee = employeeRepository.findByEmailIgnoreCase(email)
                 .map(existing -> {
-                    existing.update(input.fullName().trim(), normalizeEmail(input.managerEmail()));
+                    existing.update(input.fullName().trim(), normalizeEmail(input.managerEmail()), input.joiningDate(),
+                            input.employmentType(), input.probationEndDate());
                     return existing;
                 })
-                .orElseGet(() -> employeeRepository.save(new Employee(email, input.fullName().trim(), normalizeEmail(input.managerEmail()))));
+                .orElseGet(() -> employeeRepository.save(new Employee(email, input.fullName().trim(),
+                        normalizeEmail(input.managerEmail()), input.joiningDate(), input.employmentType(),
+                        input.probationEndDate())));
 
         Map<LeaveType, BigDecimal> entitlements = Map.of(
                 LeaveType.PL, input.plLeaveDays(),
