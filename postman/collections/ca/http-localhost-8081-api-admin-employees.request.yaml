@@ -1,0 +1,26 @@
+$kind: http-request
+name: http://localhost:8081/api/admin/employees
+description: ""
+url: http://localhost:8081/api/admin/employees
+method: POST
+headers:
+  X-HR-Admin-Key: ZG%h84250:Sdban2y0{DlL;:fHXmAW[9
+  Content-Type: application/json
+body:
+  type: json
+  content: "{\r
+
+    \  \"email\": \"nova.park@example.test\",\r
+
+    \  \"fullName\": \"Nova Park\",\r
+
+    \  \"managerEmail\": \"orion.lee@example.test\",\r
+
+    \  \"annualLeaveDays\": 24,\r
+
+    \  \"sickLeaveDays\": 10,\r
+
+    \  \"unpaidLeaveDays\": 365\r
+
+    }"
+order: 1789546051583

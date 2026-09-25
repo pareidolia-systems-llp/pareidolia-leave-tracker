@@ -1,0 +1,23 @@
+server:
+  address: 127.0.0.1
+  port: 8081
+
+spring:
+  mail:
+    host: 127.0.0.1
+    port: 1025
+    username: ""
+    password: ""
+    properties:
+      mail.smtp.auth: false
+      mail.smtp.starttls.enable: false
+
+app:
+  base-url: http://127.0.0.1:8081
+  mail:
+    from: no-reply@leave-tracker.local.test
+  google-script:
+    # Google sync is disabled for dev in GoogleSheetSyncService, even if an inherited environment variable is set.
+    web-app-url: ""
+    # Supply a fictional local value through APP_GOOGLE_SCRIPT_SHARED_SECRET. Never commit a secret.
+    shared-secret: ${APP_GOOGLE_SCRIPT_SHARED_SECRET:}

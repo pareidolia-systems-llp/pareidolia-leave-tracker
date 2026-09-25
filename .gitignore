@@ -1,0 +1,9 @@
+target/
+.idea/
+*.iml
+.env
+data/
+
+outputs/
+work/
+.postman/

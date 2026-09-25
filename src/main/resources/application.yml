@@ -1,0 +1,38 @@
+spring:
+  application:
+    name: pareidolia-leave-tracker
+  datasource:
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate.jdbc.time_zone: UTC
+      hibernate.type.preferred_uuid_jdbc_type: BINARY
+  flyway:
+    enabled: true
+  mail:
+    host: ${SPRING_MAIL_HOST:}
+    port: ${SPRING_MAIL_PORT:587}
+    username: ${SPRING_MAIL_USERNAME:}
+    password: ${SPRING_MAIL_PASSWORD:}
+    properties:
+      mail.smtp.auth: ${SPRING_MAIL_SMTP_AUTH:true}
+      mail.smtp.starttls.enable: ${SPRING_MAIL_STARTTLS_ENABLE:true}
+
+server:
+  error:
+    include-message: never
+
+app:
+  base-url: ${APP_BASE_URL:http://localhost:8080}
+  admin-api-key: ${APP_ADMIN_API_KEY:}
+  approval-token-validity-hours: ${APP_APPROVAL_TOKEN_VALIDITY_HOURS:72}
+  mail:
+    from: ${APP_MAIL_FROM:${SPRING_MAIL_USERNAME:no-reply@pareidolia-leave-tracker.local}}
+  google-script:
+    web-app-url: ${APP_GOOGLE_SCRIPT_WEB_APP_URL:}
+    shared-secret: ${APP_GOOGLE_SCRIPT_SHARED_SECRET:}

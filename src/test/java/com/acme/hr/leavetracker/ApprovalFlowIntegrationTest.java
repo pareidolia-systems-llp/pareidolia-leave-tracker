@@ -1,0 +1,120 @@
+package com.acme.hr.leavetracker;
+
+import com.acme.hr.leavetracker.domain.Employee;
+import com.acme.hr.leavetracker.domain.LeaveBalance;
+import com.acme.hr.leavetracker.domain.LeaveRequest;
+import com.acme.hr.leavetracker.domain.LeaveType;
+import com.acme.hr.leavetracker.repository.EmployeeRepository;
+import com.acme.hr.leavetracker.repository.LeaveBalanceRepository;
+import com.acme.hr.leavetracker.repository.LeaveAuditEventRepository;
+import com.acme.hr.leavetracker.repository.LeaveRequestRepository;
+import com.acme.hr.leavetracker.service.IntegrationSignatureService;
+import com.acme.hr.leavetracker.service.TokenService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@SpringBootTest
+@AutoConfigureMockMvc
+@ActiveProfiles("test")
+class ApprovalFlowIntegrationTest {
+    @Autowired private MockMvc mockMvc;
+    @Autowired private EmployeeRepository employeeRepository;
+    @Autowired private LeaveBalanceRepository balanceRepository;
+    @Autowired private LeaveAuditEventRepository auditEventRepository;
+    @Autowired private LeaveRequestRepository requestRepository;
+    @Autowired private TokenService tokenService;
+    @Autowired private IntegrationSignatureService signatureService;
+
+    @BeforeEach
+    void resetDatabase() {
+        auditEventRepository.deleteAll();
+        requestRepository.deleteAll();
+        balanceRepository.deleteAll();
+        employeeRepository.deleteAll();
+    }
+
+    @Test
+    void signedApprovalDeductsDecimalBalanceExactlyOnce() throws Exception {
+        Employee employee = employeeRepository.save(new Employee("employee@example.com", "Employee One", "manager@example.com"));
+        LeaveBalance balance = balanceRepository.save(new LeaveBalance(employee, LeaveType.PL, new BigDecimal("3.0")));
+        String approvalToken = "known-test-token";
+        LeaveRequest request = requestRepository.save(new LeaveRequest(employee, LeaveType.PL,
+                LocalDate.now().plusDays(3), LocalDate.now().plusDays(4), new BigDecimal("1.5"), "Family event",
+                tokenService.hash(approvalToken), Instant.now().plusSeconds(3600)));
+        String comment = "Approved after review";
+        String signature = signatureService.signDecision(request.getId().toString(), "APPROVE", approvalToken, comment);
+
+        mockMvc.perform(post("/api/integrations/google/decisions")
+                        .header("X-Google-Signature", signature)
+                        .contentType("application/json")
+                        .content("""
+                                {"requestId":"%s","action":"APPROVE","token":"%s","managerComment":"%s"}
+                                """.formatted(request.getId(), approvalToken, comment)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("APPROVED"));
+
+        LeaveBalance reloaded = balanceRepository.findById(balance.getId()).orElseThrow();
+        assertThat(reloaded.getUsedDays()).isEqualByComparingTo("1.5");
+        assertThat(reloaded.getAvailableDays()).isEqualByComparingTo("1.5");
+
+        mockMvc.perform(post("/api/integrations/google/decisions")
+                        .header("X-Google-Signature", signature)
+                        .contentType("application/json")
+                        .content("""
+                                {"requestId":"%s","action":"APPROVE","token":"%s","managerComment":"%s"}
+                                """.formatted(request.getId(), approvalToken, comment)))
+                .andExpect(status().isConflict());
+
+        assertThat(balanceRepository.findById(balance.getId()).orElseThrow().getUsedDays()).isEqualByComparingTo("1.5");
+    }
+
+    @Test
+    void employeeUpsertStoresAndReturnsDecimalBalances() throws Exception {
+        mockMvc.perform(post("/api/admin/employees")
+                        .header("X-HR-Admin-Key", "test-admin-key")
+                        .contentType("application/json")
+                        .content("""
+                                {
+                                  "email":"nova.park@example.test",
+                                  "fullName":"Nova Park",
+                                  "managerEmail":"orion.lee@example.test",
+                                  "plLeaveDays":1.5,
+                                  "clLeaveDays":0.5,
+                                  "slLeaveDays":7.0
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.email").value("nova.park@example.test"));
+
+        Employee employee = employeeRepository.findByEmailIgnoreCase("nova.park@example.test").orElseThrow();
+        var balances = balanceRepository.findByEmployeeId(employee.getId());
+        assertThat(balances.stream().map(LeaveBalance::getLeaveType))
+                .containsExactlyInAnyOrder(LeaveType.PL, LeaveType.CL, LeaveType.SL);
+        assertThat(balances.stream().filter(balance -> balance.getLeaveType() == LeaveType.PL).findFirst().orElseThrow()
+                .getEntitlementDays()).isEqualByComparingTo("1.5");
+        assertThat(balances.stream().filter(balance -> balance.getLeaveType() == LeaveType.CL).findFirst().orElseThrow()
+                .getEntitlementDays()).isEqualByComparingTo("0.5");
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .get("/api/employees/nova.park@example.test/balance"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].leaveType").value("CL"))
+                .andExpect(jsonPath("$[0].entitlementDays").value(0.5))
+                .andExpect(jsonPath("$[1].leaveType").value("PL"))
+                .andExpect(jsonPath("$[1].entitlementDays").value(1.5));
+    }
+}
