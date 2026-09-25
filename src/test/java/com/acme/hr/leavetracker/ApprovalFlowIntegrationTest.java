@@ -16,12 +16,18 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -31,6 +37,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@Import(ApprovalFlowIntegrationTest.FixedClockConfiguration.class)
 class ApprovalFlowIntegrationTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private EmployeeRepository employeeRepository;
@@ -85,7 +92,7 @@ class ApprovalFlowIntegrationTest {
     }
 
     @Test
-    void regularEmployeeUpsertStoresPolicyMetadataAndReturnsDecimalBalances() throws Exception {
+    void permanentEmployeeUpsertStoresPolicyMetadataAndReturnsDecimalBalances() throws Exception {
         mockMvc.perform(post("/api/admin/employees")
                         .header("X-HR-Admin-Key", "test-admin-key")
                         .contentType("application/json")
@@ -129,7 +136,7 @@ class ApprovalFlowIntegrationTest {
     }
 
     @Test
-    void internEmployeeUpsertStoresPolicyMetadata() throws Exception {
+    void internEmployeeUpsertPreservesConfiguredBalances() throws Exception {
         mockMvc.perform(post("/api/admin/employees")
                         .header("X-HR-Admin-Key", "test-admin-key")
                         .contentType("application/json")
@@ -140,20 +147,104 @@ class ApprovalFlowIntegrationTest {
                                   "managerEmail":"orion.lee@example.test",
                                   "joiningDate":"2026-03-09",
                                   "employmentType":"INTERN",
-                                  "probationEndDate":"2026-06-09",
-                                  "plLeaveDays":0.0,
-                                  "clLeaveDays":0.0,
-                                  "slLeaveDays":0.0
+                                  "probationEndDate":"2026-03-31",
+                                  "plLeaveDays":1.5,
+                                  "clLeaveDays":0.5,
+                                  "slLeaveDays":7.0
                                 }
                                 """))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.employmentType").value("INTERN"))
-                .andExpect(jsonPath("$.probationEndDate").value("2026-06-09"));
+                .andExpect(jsonPath("$.probationEndDate").value("2026-03-31"));
 
         Employee employee = employeeRepository.findByEmailIgnoreCase("lumen.ray@example.test").orElseThrow();
         assertThat(employee.getJoiningDate()).isEqualTo(LocalDate.of(2026, 3, 9));
         assertThat(employee.getEmploymentType()).isEqualTo(EmploymentType.INTERN);
-        assertThat(employee.getProbationEndDate()).isEqualTo(LocalDate.of(2026, 6, 9));
+        assertThat(employee.getProbationEndDate()).isEqualTo(LocalDate.of(2026, 3, 31));
+        assertThat(balanceRepository.findByEmployeeId(employee.getId()))
+                .extracting(LeaveBalance::getEntitlementDays)
+                .containsExactlyInAnyOrder(new BigDecimal("1.5"), new BigDecimal("0.5"), new BigDecimal("7.0"));
+    }
+
+    @Test
+    void permanentEmployeeInProbationCannotSubmitPlAndBalanceIsUnchanged() throws Exception {
+        Employee employee = employeeRepository.save(new Employee("ember.finch@example.test", "Ember Finch", "orion.lee@example.test",
+                LocalDate.of(2026, 3, 10), EmploymentType.PERMANENT, LocalDate.of(2026, 4, 1)));
+        LeaveBalance balance = balanceRepository.save(new LeaveBalance(employee, LeaveType.PL, new BigDecimal("2.5")));
+
+        submitLeave(employee.getEmail(), LeaveType.PL)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("in probation")));
+
+        LeaveBalance reloaded = balanceRepository.findById(balance.getId()).orElseThrow();
+        assertThat(reloaded.getEntitlementDays()).isEqualByComparingTo("2.5");
+        assertThat(reloaded.getUsedDays()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(requestRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void internEmployeeInProbationCannotSubmitLeaveAndBalanceIsUnchanged() throws Exception {
+        Employee employee = employeeRepository.save(new Employee("mira.slate@example.test", "Mira Slate", "orion.lee@example.test",
+                LocalDate.of(2026, 3, 11), EmploymentType.INTERN, LocalDate.of(2026, 4, 1)));
+        LeaveBalance balance = balanceRepository.save(new LeaveBalance(employee, LeaveType.CL, new BigDecimal("3.0")));
+
+        submitLeave(employee.getEmail(), LeaveType.CL)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("in probation")));
+
+        assertThat(balanceRepository.findById(balance.getId()).orElseThrow().getEntitlementDays())
+                .isEqualByComparingTo("3.0");
+        assertThat(balanceRepository.findById(balance.getId()).orElseThrow().getUsedDays())
+                .isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    @Test
+    void employeeIsEligibleStartingTheDayAfterProbationEnds() throws Exception {
+        Employee employee = employeeRepository.save(new Employee("lyra.moss@example.test", "Lyra Moss", "orion.lee@example.test",
+                LocalDate.of(2026, 3, 12), EmploymentType.PERMANENT, LocalDate.of(2026, 3, 31)));
+        LeaveBalance balance = balanceRepository.save(new LeaveBalance(employee, LeaveType.SL, new BigDecimal("4.0")));
+
+        submitLeave(employee.getEmail(), LeaveType.SL)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("PENDING"));
+
+        assertThat(requestRepository.findAll()).hasSize(1);
+        assertThat(balanceRepository.findById(balance.getId()).orElseThrow().getUsedDays())
+                .isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    @Test
+    void nullProbationEndDatePreservesExistingLeaveSubmissionBehavior() throws Exception {
+        Employee employee = employeeRepository.save(new Employee("sol.ember@example.test", "Sol Ember", "orion.lee@example.test",
+                LocalDate.of(2026, 3, 13), EmploymentType.INTERN, null));
+        balanceRepository.save(new LeaveBalance(employee, LeaveType.PL, new BigDecimal("2.0")));
+
+        submitLeave(employee.getEmail(), LeaveType.PL)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("PENDING"));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions submitLeave(String email, LeaveType leaveType) throws Exception {
+        return mockMvc.perform(post("/api/leave-requests")
+                .contentType("application/json")
+                .content("""
+                        {
+                          "employeeEmail":"%s",
+                          "leaveType":"%s",
+                          "startDate":"2026-04-02",
+                          "endDate":"2026-04-02",
+                          "reason":"Fictional leave request"
+                        }
+                        """.formatted(email, leaveType)));
+    }
+
+    @TestConfiguration
+    static class FixedClockConfiguration {
+        @Bean
+        @Primary
+        Clock fixedClock() {
+            return Clock.fixed(Instant.parse("2026-04-01T00:00:00Z"), ZoneOffset.UTC);
+        }
     }
 
     @Test
