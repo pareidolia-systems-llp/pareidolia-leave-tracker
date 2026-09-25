@@ -19,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -34,12 +35,14 @@ public class LeaveWorkflowService {
     private final BusinessDayCalculator businessDayCalculator;
     private final TokenService tokenService;
     private final ApplicationEventPublisher eventPublisher;
+    private final LeaveEligibilityService leaveEligibilityService;
+    private final Clock clock;
     private final long tokenValidityHours;
 
     public LeaveWorkflowService(EmployeeRepository employeeRepository, LeaveBalanceRepository balanceRepository,
                                 LeaveRequestRepository requestRepository, LeaveAuditEventRepository auditEventRepository,
                                 BusinessDayCalculator businessDayCalculator, TokenService tokenService,
-                                ApplicationEventPublisher eventPublisher,
+                                ApplicationEventPublisher eventPublisher, LeaveEligibilityService leaveEligibilityService, Clock clock,
                                 com.acme.hr.leavetracker.config.AppProperties properties) {
         this.employeeRepository = employeeRepository;
         this.balanceRepository = balanceRepository;
@@ -48,6 +51,8 @@ public class LeaveWorkflowService {
         this.businessDayCalculator = businessDayCalculator;
         this.tokenService = tokenService;
         this.eventPublisher = eventPublisher;
+        this.leaveEligibilityService = leaveEligibilityService;
+        this.clock = clock;
         this.tokenValidityHours = properties.approvalTokenValidityHours();
     }
 
@@ -58,6 +63,7 @@ public class LeaveWorkflowService {
         Employee employee = employeeRepository.findByEmailIgnoreCase(employeeEmail)
                 .filter(Employee::isActive)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No active employee is registered with that email address"));
+        leaveEligibilityService.assertCanSubmitLeave(employee);
 
         List<LeaveRequest> conflicts = requestRepository.findOverlapping(employee.getId(),
                 List.of(LeaveStatus.PENDING, LeaveStatus.APPROVED), submission.startDate(), submission.endDate());
@@ -123,7 +129,7 @@ public class LeaveWorkflowService {
         if (endDate.isBefore(startDate)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "End date must not be before start date");
         }
-        if (startDate.isBefore(LocalDate.now())) {
+        if (startDate.isBefore(LocalDate.now(clock))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Leave cannot start in the past");
         }
     }
