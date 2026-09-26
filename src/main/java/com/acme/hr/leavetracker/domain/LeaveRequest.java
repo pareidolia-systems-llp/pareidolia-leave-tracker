@@ -31,6 +31,10 @@ public class LeaveRequest {
     @Column(name = "leave_type", nullable = false, length = 30)
     private LeaveType leaveType;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private LeaveDuration duration;
+
     @Column(name = "start_date", nullable = false)
     private LocalDate startDate;
 
@@ -66,10 +70,17 @@ public class LeaveRequest {
 
     public LeaveRequest(Employee employee, LeaveType leaveType, LocalDate startDate, LocalDate endDate,
                         BigDecimal totalDays, String reason, String approvalTokenHash, Instant approvalTokenExpiresAt) {
+        this(employee, leaveType, LeaveDuration.FULL_DAY, startDate, endDate, totalDays, reason,
+                approvalTokenHash, approvalTokenExpiresAt);
+    }
+
+    public LeaveRequest(Employee employee, LeaveType leaveType, LeaveDuration duration, LocalDate startDate, LocalDate endDate,
+                        BigDecimal totalDays, String reason, String approvalTokenHash, Instant approvalTokenExpiresAt) {
         this.id = UUID.randomUUID();
         this.employee = employee;
         this.approverEmail = employee.getManagerEmail();
         this.leaveType = leaveType;
+        this.duration = duration;
         this.startDate = startDate;
         this.endDate = endDate;
         this.totalDays = totalDays;
@@ -84,6 +95,7 @@ public class LeaveRequest {
     public Employee getEmployee() { return employee; }
     public String getApproverEmail() { return approverEmail; }
     public LeaveType getLeaveType() { return leaveType; }
+    public LeaveDuration getDuration() { return duration; }
     public LocalDate getStartDate() { return startDate; }
     public LocalDate getEndDate() { return endDate; }
     public BigDecimal getTotalDays() { return totalDays; }

@@ -6,6 +6,7 @@ import com.acme.hr.leavetracker.domain.AuditEventType;
 import com.acme.hr.leavetracker.domain.Employee;
 import com.acme.hr.leavetracker.domain.LeaveAuditEvent;
 import com.acme.hr.leavetracker.domain.LeaveBalance;
+import com.acme.hr.leavetracker.domain.LeaveDuration;
 import com.acme.hr.leavetracker.domain.LeaveRequest;
 import com.acme.hr.leavetracker.domain.LeaveStatus;
 import com.acme.hr.leavetracker.repository.EmployeeRepository;
@@ -71,10 +72,7 @@ public class LeaveWorkflowService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This leave period overlaps an existing pending or approved request");
         }
 
-        BigDecimal totalDays = businessDayCalculator.count(employee, submission.startDate(), submission.endDate());
-        if (totalDays.compareTo(BigDecimal.ZERO) == 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Leave must include at least one working day");
-        }
+        BigDecimal totalDays = calculateTotalDays(employee, submission);
 
         LeaveBalance balance = balanceRepository.findByEmployeeIdAndLeaveType(employee.getId(), submission.leaveType())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "No balance is configured for this leave type"));
@@ -83,7 +81,7 @@ public class LeaveWorkflowService {
         }
 
         String rawToken = tokenService.newToken();
-        LeaveRequest request = new LeaveRequest(employee, submission.leaveType(), submission.startDate(), submission.endDate(),
+        LeaveRequest request = new LeaveRequest(employee, submission.leaveType(), submission.duration(), submission.startDate(), submission.endDate(),
                 totalDays, submission.reason().trim(), tokenService.hash(rawToken),
                 Instant.now().plusSeconds(tokenValidityHours * 3600));
         requestRepository.save(request);
@@ -132,6 +130,27 @@ public class LeaveWorkflowService {
         if (startDate.isBefore(LocalDate.now(clock))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Leave cannot start in the past");
         }
+    }
+
+    private BigDecimal calculateTotalDays(Employee employee, LeaveSubmission submission) {
+        if (submission.duration() == LeaveDuration.HALF_DAY) {
+            if (submission.leaveType() == com.acme.hr.leavetracker.domain.LeaveType.PL) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "HALF_DAY leave is allowed only for CL and SL");
+            }
+            if (!submission.startDate().isEqual(submission.endDate())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "HALF_DAY leave must start and end on the same date");
+            }
+            if (businessDayCalculator.count(employee, submission.startDate(), submission.endDate()).compareTo(BigDecimal.ZERO) == 0) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "HALF_DAY leave must fall on a working day");
+            }
+            return new BigDecimal("0.5");
+        }
+
+        BigDecimal totalDays = businessDayCalculator.count(employee, submission.startDate(), submission.endDate());
+        if (totalDays.compareTo(BigDecimal.ZERO) == 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Leave must include at least one working day");
+        }
+        return totalDays;
     }
 
     private LeaveStatus toDecision(String action) {
