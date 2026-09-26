@@ -23,35 +23,38 @@ import java.util.UUID;
 public class HrAdminService {
     private final EmployeeRepository employeeRepository;
     private final LeaveBalanceRepository balanceRepository;
+    private final LeaveEntitlementCalculator entitlementCalculator;
 
-    public HrAdminService(EmployeeRepository employeeRepository, LeaveBalanceRepository balanceRepository) {
+    public HrAdminService(EmployeeRepository employeeRepository, LeaveBalanceRepository balanceRepository,
+                          LeaveEntitlementCalculator entitlementCalculator) {
         this.employeeRepository = employeeRepository;
         this.balanceRepository = balanceRepository;
+        this.entitlementCalculator = entitlementCalculator;
     }
 
     @Transactional
     public Employee upsert(EmployeeUpsert input) {
         String email = normalizeEmail(input.email());
-        Employee employee = employeeRepository.findByEmailIgnoreCase(email)
+        return employeeRepository.findByEmailIgnoreCase(email)
                 .map(existing -> {
                     existing.update(input.fullName().trim(), normalizeEmail(input.managerEmail()), input.joiningDate(),
                             input.employmentType(), input.probationEndDate());
                     return existing;
                 })
-                .orElseGet(() -> employeeRepository.save(new Employee(email, input.fullName().trim(),
-                        normalizeEmail(input.managerEmail()), input.joiningDate(), input.employmentType(),
-                        input.probationEndDate())));
+                .orElseGet(() -> createEmployeeWithInitialEntitlements(email, input));
+    }
 
+    private Employee createEmployeeWithInitialEntitlements(String email, EmployeeUpsert input) {
+        Employee employee = employeeRepository.save(new Employee(email, input.fullName().trim(),
+                normalizeEmail(input.managerEmail()), input.joiningDate(), input.employmentType(),
+                input.probationEndDate()));
+        BigDecimal clAndSlEntitlement = entitlementCalculator.clAndSlEntitlementForJoiningYear(input.joiningDate());
         Map<LeaveType, BigDecimal> entitlements = Map.of(
-                LeaveType.PL, input.plLeaveDays(),
-                LeaveType.CL, input.clLeaveDays(),
-                LeaveType.SL, input.slLeaveDays());
-        for (Map.Entry<LeaveType, BigDecimal> entry : entitlements.entrySet()) {
-            LeaveBalance balance = balanceRepository.findByEmployeeIdAndLeaveType(employee.getId(), entry.getKey())
-                    .orElseGet(() -> new LeaveBalance(employee, entry.getKey(), entry.getValue()));
-            balance.setEntitlementDays(entry.getValue());
-            balanceRepository.save(balance);
-        }
+                LeaveType.PL, new BigDecimal("0.0"),
+                LeaveType.CL, clAndSlEntitlement,
+                LeaveType.SL, clAndSlEntitlement);
+        entitlements.forEach((leaveType, entitlementDays) -> balanceRepository.save(
+                new LeaveBalance(employee, leaveType, entitlementDays)));
         return employee;
     }
 

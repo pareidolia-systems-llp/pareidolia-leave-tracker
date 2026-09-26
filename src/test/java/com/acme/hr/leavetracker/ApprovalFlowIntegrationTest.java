@@ -122,21 +122,21 @@ class ApprovalFlowIntegrationTest {
         assertThat(balances.stream().map(LeaveBalance::getLeaveType))
                 .containsExactlyInAnyOrder(LeaveType.PL, LeaveType.CL, LeaveType.SL);
         assertThat(balances.stream().filter(balance -> balance.getLeaveType() == LeaveType.PL).findFirst().orElseThrow()
-                .getEntitlementDays()).isEqualByComparingTo("1.5");
+                .getEntitlementDays()).isEqualByComparingTo("0.0");
         assertThat(balances.stream().filter(balance -> balance.getLeaveType() == LeaveType.CL).findFirst().orElseThrow()
-                .getEntitlementDays()).isEqualByComparingTo("0.5");
+                .getEntitlementDays()).isEqualByComparingTo("6.0");
 
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                         .get("/api/employees/nova.park@example.test/balance"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].leaveType").value("CL"))
-                .andExpect(jsonPath("$[0].entitlementDays").value(0.5))
+                .andExpect(jsonPath("$[0].entitlementDays").value(6.0))
                 .andExpect(jsonPath("$[1].leaveType").value("PL"))
-                .andExpect(jsonPath("$[1].entitlementDays").value(1.5));
+                .andExpect(jsonPath("$[1].entitlementDays").value(0.0));
     }
 
     @Test
-    void internEmployeeUpsertPreservesConfiguredBalances() throws Exception {
+    void internEmployeeUpsertCalculatesClAndSlFromJoiningMonth() throws Exception {
         mockMvc.perform(post("/api/admin/employees")
                         .header("X-HR-Admin-Key", "test-admin-key")
                         .contentType("application/json")
@@ -163,7 +163,7 @@ class ApprovalFlowIntegrationTest {
         assertThat(employee.getProbationEndDate()).isEqualTo(LocalDate.of(2026, 3, 31));
         assertThat(balanceRepository.findByEmployeeId(employee.getId()))
                 .extracting(LeaveBalance::getEntitlementDays)
-                .containsExactlyInAnyOrder(new BigDecimal("1.5"), new BigDecimal("0.5"), new BigDecimal("7.0"));
+                .containsExactlyInAnyOrder(new BigDecimal("0.0"), new BigDecimal("5.5"), new BigDecimal("5.5"));
     }
 
     @Test
