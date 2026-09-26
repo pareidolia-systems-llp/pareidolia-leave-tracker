@@ -44,6 +44,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Import(HalfDayLeaveIntegrationTest.FixedClockConfiguration.class)
 class HalfDayLeaveIntegrationTest {
     private static final LocalDate WORKING_DAY = LocalDate.of(2026, 4, 2);
+    private static final LocalDate PAST_WORKING_DAY = LocalDate.of(2026, 3, 31);
 
     @Autowired private LeaveWorkflowService leaveWorkflowService;
     @Autowired private TokenService tokenService;
@@ -171,10 +172,85 @@ class HalfDayLeaveIntegrationTest {
         assertThat(request.totalDays()).isEqualByComparingTo("1.0");
     }
 
+    @Test
+    void pastDateSlFullDayRequestIsAccepted() {
+        Employee employee = employeeWithBalance(LeaveType.SL);
+
+        var request = submit(employee, LeaveType.SL, LeaveDuration.FULL_DAY, PAST_WORKING_DAY, PAST_WORKING_DAY);
+
+        assertThat(request.totalDays()).isEqualByComparingTo("1.0");
+    }
+
+    @Test
+    void pastDateSlHalfDayRequestIsAccepted() {
+        Employee employee = employeeWithBalance(LeaveType.SL);
+
+        var request = submit(employee, LeaveType.SL, LeaveDuration.HALF_DAY, PAST_WORKING_DAY, PAST_WORKING_DAY);
+
+        assertThat(request.totalDays()).isEqualByComparingTo("0.5");
+    }
+
+    @Test
+    void pastDatePlAndClRequestsAreRejectedIncludingClHalfDay() {
+        Employee plEmployee = employeeWithBalance(LeaveType.PL);
+        Employee clEmployee = employeeWithBalance(LeaveType.CL);
+
+        assertThatThrownBy(() -> submit(plEmployee, LeaveType.PL, LeaveDuration.FULL_DAY, PAST_WORKING_DAY, PAST_WORKING_DAY))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("Only SL");
+        assertThatThrownBy(() -> submit(clEmployee, LeaveType.CL, LeaveDuration.FULL_DAY, PAST_WORKING_DAY, PAST_WORKING_DAY))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("Only SL");
+        assertThatThrownBy(() -> submit(clEmployee, LeaveType.CL, LeaveDuration.HALF_DAY, PAST_WORKING_DAY, PAST_WORKING_DAY))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("Only SL");
+    }
+
+    @Test
+    void onlySlMaySpanFromPastThroughCurrentOrFutureDate() {
+        Employee slEmployee = employeeWithBalance(LeaveType.SL, new BigDecimal("5.0"));
+        Employee plEmployee = employeeWithBalance(LeaveType.PL);
+        Employee clEmployee = employeeWithBalance(LeaveType.CL);
+
+        assertThat(submit(slEmployee, LeaveType.SL, LeaveDuration.FULL_DAY, PAST_WORKING_DAY, WORKING_DAY).totalDays())
+                .isEqualByComparingTo("3.0");
+        assertThatThrownBy(() -> submit(plEmployee, LeaveType.PL, LeaveDuration.FULL_DAY, PAST_WORKING_DAY, WORKING_DAY))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("Only SL");
+        assertThatThrownBy(() -> submit(clEmployee, LeaveType.CL, LeaveDuration.FULL_DAY, PAST_WORKING_DAY, WORKING_DAY))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("Only SL");
+    }
+
+    @Test
+    void backdatedSlOnHolidayOrWeeklyOffIsRejected() {
+        Employee holidayEmployee = employeeWithBalance(LeaveType.SL);
+        holidayRepository.save(new CompanyHoliday(PAST_WORKING_DAY, "Fictional Festival"));
+        assertThatThrownBy(() -> submit(holidayEmployee, LeaveType.SL, LeaveDuration.FULL_DAY, PAST_WORKING_DAY, PAST_WORKING_DAY))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("working day");
+
+        holidayRepository.deleteAll();
+        weeklyOffRepository.save(new EmployeeWeeklyOff(holidayEmployee, PAST_WORKING_DAY));
+        assertThatThrownBy(() -> submit(holidayEmployee, LeaveType.SL, LeaveDuration.HALF_DAY, PAST_WORKING_DAY, PAST_WORKING_DAY))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("working day");
+    }
+
+    @Test
+    void probationStillBlocksBackdatedSlAndInsufficientBalanceStillRejectsIt() {
+        Employee probationEmployee = employeeRepository.save(new Employee("fictional.probation@example.test", "Fictional Employee",
+                "manager@example.test", LocalDate.of(2026, 1, 1), EmploymentType.PERMANENT, LocalDate.of(2026, 4, 30)));
+        balanceRepository.save(new LeaveBalance(probationEmployee, LeaveType.SL, new BigDecimal("2.0")));
+        assertThatThrownBy(() -> submit(probationEmployee, LeaveType.SL, LeaveDuration.FULL_DAY, PAST_WORKING_DAY, PAST_WORKING_DAY))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("in probation");
+
+        Employee insufficientBalanceEmployee = employeeWithBalance(LeaveType.SL, new BigDecimal("0.5"));
+        assertThatThrownBy(() -> submit(insufficientBalanceEmployee, LeaveType.SL, LeaveDuration.FULL_DAY, PAST_WORKING_DAY, PAST_WORKING_DAY))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("Insufficient");
+    }
+
     private Employee employeeWithBalance(LeaveType leaveType) {
+        return employeeWithBalance(leaveType, new BigDecimal("2.0"));
+    }
+
+    private Employee employeeWithBalance(LeaveType leaveType, BigDecimal entitlementDays) {
         Employee employee = employeeRepository.save(new Employee("fictional." + leaveType.name().toLowerCase() + "@example.test",
                 "Fictional Employee", "manager@example.test", LocalDate.of(2026, 1, 1), EmploymentType.PERMANENT, null));
-        balanceRepository.save(new LeaveBalance(employee, leaveType, new BigDecimal("2.0")));
+        balanceRepository.save(new LeaveBalance(employee, leaveType, entitlementDays));
         return employee;
     }
 
