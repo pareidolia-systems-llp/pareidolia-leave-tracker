@@ -231,6 +231,7 @@ class ApprovalFlowIntegrationTest {
                         {
                           "employeeEmail":"%s",
                           "leaveType":"%s",
+                          "duration":"FULL_DAY",
                           "startDate":"2026-04-02",
                           "endDate":"2026-04-02",
                           "reason":"Fictional leave request"

@@ -138,6 +138,7 @@ class EmployeeWorkingCalendarIntegrationTest {
                                 {
                                   "employeeEmail":"sol.ember@example.test",
                                   "leaveType":"PL",
+                                  "duration":"FULL_DAY",
                                   "startDate":"2026-10-03",
                                   "endDate":"2026-10-04",
                                   "reason":"Fictional calendar test"
@@ -147,6 +148,27 @@ class EmployeeWorkingCalendarIntegrationTest {
                 .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("working day")));
 
         assertThat(requestRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void leaveRequestWithoutDurationDefaultsToFullDay() throws Exception {
+        Employee employee = employee("lumen.ray@example.test");
+        balanceRepository.save(new LeaveBalance(employee, LeaveType.PL, new BigDecimal("2.0")));
+
+        mockMvc.perform(post("/api/leave-requests")
+                        .contentType("application/json")
+                        .content("""
+                                {
+                                  "employeeEmail":"lumen.ray@example.test",
+                                  "leaveType":"PL",
+                                  "startDate":"2026-10-05",
+                                  "endDate":"2026-10-05",
+                                  "reason":"Fictional compatibility test"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.duration").value("FULL_DAY"))
+                .andExpect(jsonPath("$.totalDays").value(1.0));
     }
 
     private Employee employee(String email) {
