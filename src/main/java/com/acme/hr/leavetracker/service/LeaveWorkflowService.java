@@ -71,9 +71,9 @@ public class LeaveWorkflowService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This leave period overlaps an existing pending or approved request");
         }
 
-        BigDecimal totalDays = businessDayCalculator.count(submission.startDate(), submission.endDate());
+        BigDecimal totalDays = businessDayCalculator.count(employee, submission.startDate(), submission.endDate());
         if (totalDays.compareTo(BigDecimal.ZERO) == 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Leave must include at least one weekday");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Leave must include at least one working day");
         }
 
         LeaveBalance balance = balanceRepository.findByEmployeeIdAndLeaveType(employee.getId(), submission.leaveType())
