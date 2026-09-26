@@ -9,6 +9,7 @@ import com.acme.hr.leavetracker.domain.LeaveBalance;
 import com.acme.hr.leavetracker.domain.LeaveDuration;
 import com.acme.hr.leavetracker.domain.LeaveRequest;
 import com.acme.hr.leavetracker.domain.LeaveStatus;
+import com.acme.hr.leavetracker.domain.LeaveType;
 import com.acme.hr.leavetracker.repository.EmployeeRepository;
 import com.acme.hr.leavetracker.repository.LeaveAuditEventRepository;
 import com.acme.hr.leavetracker.repository.LeaveBalanceRepository;
@@ -59,7 +60,7 @@ public class LeaveWorkflowService {
 
     @Transactional
     public LeaveRequestView submit(LeaveSubmission submission) {
-        validateDates(submission.startDate(), submission.endDate());
+        validateDates(submission);
         String employeeEmail = normalizeEmail(submission.employeeEmail());
         Employee employee = employeeRepository.findByEmailIgnoreCase(employeeEmail)
                 .filter(Employee::isActive)
@@ -123,12 +124,12 @@ public class LeaveWorkflowService {
         return LeaveRequestView.from(request);
     }
 
-    private void validateDates(LocalDate startDate, LocalDate endDate) {
-        if (endDate.isBefore(startDate)) {
+    private void validateDates(LeaveSubmission submission) {
+        if (submission.endDate().isBefore(submission.startDate())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "End date must not be before start date");
         }
-        if (startDate.isBefore(LocalDate.now(clock))) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Leave cannot start in the past");
+        if (submission.startDate().isBefore(LocalDate.now(clock)) && submission.leaveType() != LeaveType.SL) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only SL leave can start in the past");
         }
     }
 

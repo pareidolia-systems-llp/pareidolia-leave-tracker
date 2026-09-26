@@ -3,10 +3,23 @@ const result = document.querySelector('#result');
 const emailInput = document.querySelector('#employeeEmail');
 const balanceBox = document.querySelector('#balances');
 const submitButton = document.querySelector('#submit-button');
+const leaveTypeInput = document.querySelector('#leaveType');
+const startDateInput = document.querySelector('#startDate');
+const endDateInput = document.querySelector('#endDate');
 
 const today = new Date().toISOString().slice(0, 10);
-document.querySelector('#startDate').min = today;
-document.querySelector('#endDate').min = today;
+
+function updateDateConstraints() {
+  const allowsPastDates = leaveTypeInput.value === 'SL';
+  if (!allowsPastDates && startDateInput.value && startDateInput.value < today) startDateInput.value = '';
+  if (!allowsPastDates && endDateInput.value && endDateInput.value < today) endDateInput.value = '';
+
+  startDateInput.min = allowsPastDates ? '' : today;
+  endDateInput.min = startDateInput.value || (allowsPastDates ? '' : today);
+  if (endDateInput.value && endDateInput.min && endDateInput.value < endDateInput.min) endDateInput.value = '';
+}
+
+updateDateConstraints();
 
 function showResult(message, kind) {
   result.textContent = message;
@@ -38,9 +51,8 @@ async function showBalances() {
 
 document.querySelector('#balance-button').addEventListener('click', showBalances);
 
-document.querySelector('#startDate').addEventListener('change', event => {
-  document.querySelector('#endDate').min = event.target.value || today;
-});
+leaveTypeInput.addEventListener('change', updateDateConstraints);
+startDateInput.addEventListener('change', updateDateConstraints);
 
 form.addEventListener('submit', async event => {
   event.preventDefault();
@@ -56,8 +68,7 @@ form.addEventListener('submit', async event => {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Could not submit your request.');
     form.reset();
-    document.querySelector('#startDate').min = today;
-    document.querySelector('#endDate').min = today;
+    updateDateConstraints();
     balanceBox.innerHTML = '';
     showResult(`Request ${payload.id} sent to your manager for approval.`, 'success');
   } catch (error) {
