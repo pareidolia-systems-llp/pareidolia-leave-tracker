@@ -9,15 +9,20 @@ import com.acme.hr.leavetracker.domain.LeaveBalance;
 import com.acme.hr.leavetracker.domain.LeaveDuration;
 import com.acme.hr.leavetracker.domain.LeaveRequest;
 import com.acme.hr.leavetracker.domain.LeaveStatus;
+import com.acme.hr.leavetracker.domain.LeaveSupportingDocument;
 import com.acme.hr.leavetracker.domain.LeaveType;
 import com.acme.hr.leavetracker.repository.EmployeeRepository;
 import com.acme.hr.leavetracker.repository.LeaveAuditEventRepository;
 import com.acme.hr.leavetracker.repository.LeaveBalanceRepository;
 import com.acme.hr.leavetracker.repository.LeaveRequestRepository;
+import com.acme.hr.leavetracker.repository.LeaveSupportingDocumentRepository;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
@@ -34,6 +39,8 @@ public class LeaveWorkflowService {
     private final LeaveBalanceRepository balanceRepository;
     private final LeaveRequestRepository requestRepository;
     private final LeaveAuditEventRepository auditEventRepository;
+    private final LeaveSupportingDocumentRepository supportingDocumentRepository;
+    private final SupportingDocumentStorage supportingDocumentStorage;
     private final BusinessDayCalculator businessDayCalculator;
     private final TokenService tokenService;
     private final ApplicationEventPublisher eventPublisher;
@@ -43,6 +50,7 @@ public class LeaveWorkflowService {
 
     public LeaveWorkflowService(EmployeeRepository employeeRepository, LeaveBalanceRepository balanceRepository,
                                 LeaveRequestRepository requestRepository, LeaveAuditEventRepository auditEventRepository,
+                                LeaveSupportingDocumentRepository supportingDocumentRepository, SupportingDocumentStorage supportingDocumentStorage,
                                 BusinessDayCalculator businessDayCalculator, TokenService tokenService,
                                 ApplicationEventPublisher eventPublisher, LeaveEligibilityService leaveEligibilityService, Clock clock,
                                 com.acme.hr.leavetracker.config.AppProperties properties) {
@@ -50,6 +58,8 @@ public class LeaveWorkflowService {
         this.balanceRepository = balanceRepository;
         this.requestRepository = requestRepository;
         this.auditEventRepository = auditEventRepository;
+        this.supportingDocumentRepository = supportingDocumentRepository;
+        this.supportingDocumentStorage = supportingDocumentStorage;
         this.businessDayCalculator = businessDayCalculator;
         this.tokenService = tokenService;
         this.eventPublisher = eventPublisher;
@@ -60,6 +70,11 @@ public class LeaveWorkflowService {
 
     @Transactional
     public LeaveRequestView submit(LeaveSubmission submission) {
+        return submit(submission, null);
+    }
+
+    @Transactional
+    public LeaveRequestView submit(LeaveSubmission submission, MultipartFile supportingDocument) {
         validateDates(submission);
         String employeeEmail = normalizeEmail(submission.employeeEmail());
         Employee employee = employeeRepository.findByEmailIgnoreCase(employeeEmail)
@@ -74,6 +89,10 @@ public class LeaveWorkflowService {
         }
 
         BigDecimal totalDays = calculateTotalDays(employee, submission);
+        boolean documentRequired = submission.leaveType() == LeaveType.SL && totalDays.compareTo(new BigDecimal("1.0")) > 0;
+        if (documentRequired && (supportingDocument == null || supportingDocument.isEmpty())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A supporting document is required for SL exceeding 1.0 day");
+        }
 
         LeaveBalance balance = balanceRepository.findByEmployeeIdAndLeaveType(employee.getId(), submission.leaveType())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "No balance is configured for this leave type"));
@@ -84,8 +103,18 @@ public class LeaveWorkflowService {
         String rawToken = tokenService.newToken();
         LeaveRequest request = new LeaveRequest(employee, submission.leaveType(), submission.duration(), submission.startDate(), submission.endDate(),
                 totalDays, submission.reason().trim(), tokenService.hash(rawToken),
-                Instant.now().plusSeconds(tokenValidityHours * 3600));
+                Instant.now(clock).plusSeconds(tokenValidityHours * 3600));
         requestRepository.save(request);
+        if (supportingDocument != null && !supportingDocument.isEmpty()) {
+            var storedDocument = supportingDocumentStorage.store(supportingDocument);
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCompletion(int status) {
+                    if (status != STATUS_COMMITTED) supportingDocumentStorage.delete(storedDocument);
+                }
+            });
+            supportingDocumentRepository.save(new LeaveSupportingDocument(request, storedDocument));
+        }
         auditEventRepository.save(new LeaveAuditEvent(request, AuditEventType.SUBMITTED, employee.getEmail(), "Leave request submitted"));
         eventPublisher.publishEvent(new LeaveSubmittedEvent(request.getId(), rawToken));
         return LeaveRequestView.from(request);
@@ -100,7 +129,7 @@ public class LeaveWorkflowService {
         if (request.getStatus() != LeaveStatus.PENDING) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This leave request has already been decided");
         }
-        if (request.getApprovalTokenExpiresAt() == null || Instant.now().isAfter(request.getApprovalTokenExpiresAt())
+        if (request.getApprovalTokenExpiresAt() == null || Instant.now(clock).isAfter(request.getApprovalTokenExpiresAt())
                 || !tokenService.matchesHash(token, request.getApprovalTokenHash())) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "The approval link is invalid or has expired");
         }

@@ -16,6 +16,7 @@ import com.acme.hr.leavetracker.repository.EmployeeWeeklyOffRepository;
 import com.acme.hr.leavetracker.repository.LeaveAuditEventRepository;
 import com.acme.hr.leavetracker.repository.LeaveBalanceRepository;
 import com.acme.hr.leavetracker.repository.LeaveRequestRepository;
+import com.acme.hr.leavetracker.repository.LeaveSupportingDocumentRepository;
 import com.acme.hr.leavetracker.repository.PlMonthlyAccrualRepository;
 import com.acme.hr.leavetracker.service.LeaveWorkflowService;
 import com.acme.hr.leavetracker.service.TokenService;
@@ -29,6 +30,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.mock.web.MockMultipartFile;
 
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -51,6 +53,7 @@ class HalfDayLeaveIntegrationTest {
     @Autowired private EmployeeRepository employeeRepository;
     @Autowired private LeaveBalanceRepository balanceRepository;
     @Autowired private LeaveRequestRepository requestRepository;
+    @Autowired private LeaveSupportingDocumentRepository supportingDocumentRepository;
     @Autowired private LeaveAuditEventRepository auditEventRepository;
     @Autowired private PlMonthlyAccrualRepository accrualRepository;
     @Autowired private EmployeeWeeklyOffRepository weeklyOffRepository;
@@ -59,6 +62,7 @@ class HalfDayLeaveIntegrationTest {
     @BeforeEach
     void resetDatabase() {
         auditEventRepository.deleteAll();
+        supportingDocumentRepository.deleteAll();
         requestRepository.deleteAll();
         weeklyOffRepository.deleteAll();
         accrualRepository.deleteAll();
@@ -209,7 +213,9 @@ class HalfDayLeaveIntegrationTest {
         Employee plEmployee = employeeWithBalance(LeaveType.PL);
         Employee clEmployee = employeeWithBalance(LeaveType.CL);
 
-        assertThat(submit(slEmployee, LeaveType.SL, LeaveDuration.FULL_DAY, PAST_WORKING_DAY, WORKING_DAY).totalDays())
+        assertThat(submit(slEmployee, LeaveType.SL, LeaveDuration.FULL_DAY, PAST_WORKING_DAY, WORKING_DAY,
+                new MockMultipartFile("supportingDocument", "fictional-medical-certificate.pdf", "application/pdf",
+                        new byte[] {'%', 'P', 'D', 'F'})).totalDays())
                 .isEqualByComparingTo("3.0");
         assertThatThrownBy(() -> submit(plEmployee, LeaveType.PL, LeaveDuration.FULL_DAY, PAST_WORKING_DAY, WORKING_DAY))
                 .isInstanceOf(ResponseStatusException.class).hasMessageContaining("Only SL");
@@ -258,6 +264,13 @@ class HalfDayLeaveIntegrationTest {
                                                                   LeaveDuration duration, LocalDate start, LocalDate end) {
         return leaveWorkflowService.submit(new LeaveSubmission(employee.getEmail(), leaveType, duration, start, end,
                 "Fictional half-day request"));
+    }
+
+    private com.acme.hr.leavetracker.api.LeaveRequestView submit(Employee employee, LeaveType leaveType,
+                                                                  LeaveDuration duration, LocalDate start, LocalDate end,
+                                                                  MockMultipartFile supportingDocument) {
+        return leaveWorkflowService.submit(new LeaveSubmission(employee.getEmail(), leaveType, duration, start, end,
+                "Fictional half-day request"), supportingDocument);
     }
 
     private LeaveRequest pendingHalfDayRequest(Employee employee, LeaveType leaveType, String token) {

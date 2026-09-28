@@ -5,6 +5,7 @@ import com.acme.hr.leavetracker.config.AppProperties;
 import com.acme.hr.leavetracker.domain.LeaveRequest;
 import com.acme.hr.leavetracker.domain.LeaveStatus;
 import com.acme.hr.leavetracker.repository.LeaveRequestRepository;
+import com.acme.hr.leavetracker.repository.LeaveSupportingDocumentRepository;
 import jakarta.mail.internet.MimeMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,15 +26,18 @@ public class NotificationService {
     private final AppProperties properties;
     private final GoogleSheetSyncService sheetSyncService;
     private final ApprovalLinkBuilder approvalLinkBuilder;
+    private final LeaveSupportingDocumentRepository supportingDocumentRepository;
 
     public NotificationService(LeaveRequestRepository requestRepository, JavaMailSender mailSender,
                                AppProperties properties, GoogleSheetSyncService sheetSyncService,
-                               ApprovalLinkBuilder approvalLinkBuilder) {
+                               ApprovalLinkBuilder approvalLinkBuilder,
+                               LeaveSupportingDocumentRepository supportingDocumentRepository) {
         this.requestRepository = requestRepository;
         this.mailSender = mailSender;
         this.properties = properties;
         this.sheetSyncService = sheetSyncService;
         this.approvalLinkBuilder = approvalLinkBuilder;
+        this.supportingDocumentRepository = supportingDocumentRepository;
     }
 
     @Async
@@ -66,12 +70,24 @@ public class NotificationService {
         }
         String approveUrl = approvalLinks.get().approveUrl();
         String rejectUrl = approvalLinks.get().rejectUrl();
+        String documentLink = supportingDocumentRepository.existsByLeaveRequestId(request.getId())
+                ? "<a href=\"" + escape(documentUrl(request, rawToken)) + "\" style=\"background:#175cd3;color:#fff;padding:10px 16px;text-decoration:none;border-radius:4px\">View supporting document</a> "
+                : "";
         String html = "<p>" + escape(request.getEmployee().getFullName()) + " requested <strong>" + escape(details)
                 + "</strong>.</p><p>Reason: " + escape(request.getReason()) + "</p>"
-                + "<p><a href=\"" + escape(approveUrl) + "\" style=\"background:#16803c;color:#fff;padding:10px 16px;text-decoration:none;border-radius:4px\">Approve</a> "
+                + "<p>" + documentLink + "<a href=\"" + escape(approveUrl) + "\" style=\"background:#16803c;color:#fff;padding:10px 16px;text-decoration:none;border-radius:4px\">Approve</a> "
                 + "<a href=\"" + escape(rejectUrl) + "\" style=\"background:#b42318;color:#fff;padding:10px 16px;text-decoration:none;border-radius:4px\">Reject</a></p>"
                 + "<p>The link expires in " + properties.approvalTokenValidityHours() + " hours. You will be asked to confirm before the decision is saved.</p>";
         sendHtml(request.getApproverEmail(), subject, html);
+    }
+
+    private String documentUrl(LeaveRequest request, String rawToken) {
+        return org.springframework.web.util.UriComponentsBuilder.fromUriString(properties.baseUrl())
+                .path("/api/leave-requests/{requestId}/supporting-document")
+                .queryParam("token", rawToken)
+                .buildAndExpand(request.getId())
+                .encode(StandardCharsets.UTF_8)
+                .toUriString();
     }
 
     private void sendEmployeeDecisionEmail(LeaveRequest request) {

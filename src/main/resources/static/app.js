@@ -56,14 +56,13 @@ startDateInput.addEventListener('change', updateDateConstraints);
 
 form.addEventListener('submit', async event => {
   event.preventDefault();
-  const data = Object.fromEntries(new FormData(form));
+  const data = new FormData(form);
   submitButton.disabled = true;
   showResult('Submitting your request…', '');
   try {
     const response = await fetch('/api/leave-requests', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
+      body: data
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Could not submit your request.');
